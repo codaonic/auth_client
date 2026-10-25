@@ -19,6 +19,27 @@ type LogoutError struct {
 
 func (e *LogoutError) Error() string { return e.msg }
 
+// TokenExchangeError is returned by ExchangeCode when the auth service refused
+// to exchange the code, or could not be reached. Code is its error code (e.g.
+// "invalid_grant" for a code that was already used, has expired, or doesn't
+// match the PKCE verifier), or empty when there was no response.
+type TokenExchangeError struct {
+	Code string
+	msg  string
+}
+
+func (e *TokenExchangeError) Error() string { return e.msg }
+
+// TokenResponse is what the auth service's /token endpoint returns for an
+// authorization code.
+type TokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	Scope        string `json:"scope"`
+	RefreshToken string `json:"refresh_token"`
+}
+
 // Client calls the auth service on behalf of an application that signs users
 // in — a website backend, a mobile or desktop app. It is separate from
 // TokenValidator, which a resource server uses to check incoming tokens.
@@ -60,6 +81,64 @@ func NewClient(issuer, clientID string, opts ...ClientOption) *Client {
 // LogoutEndpoint is the auth service's logout endpoint.
 func (c *Client) LogoutEndpoint() string {
 	return c.Issuer + "/logout"
+}
+
+// TokenEndpoint is the auth service's token endpoint.
+func (c *Client) TokenEndpoint() string {
+	return c.Issuer + "/token"
+}
+
+// ExchangeCode exchanges an authorization code for tokens at the auth service's
+// /token endpoint. It works for every sign-in flow: the redirect, the popup
+// widget, and the embedded sign-in (Auth Elements), whose "success" event hands
+// your page the code and codeVerifier to post to your backend.
+//
+// redirectURI is optional; when given it must be the one the code was issued
+// for (for an embedded sign-in, your page's origin). A refused code or an
+// unreachable auth service is returned as a *TokenExchangeError.
+func (c *Client) ExchangeCode(ctx context.Context, code, codeVerifier, redirectURI string) (*TokenResponse, error) {
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {c.ClientID},
+		"code":          {code},
+		"code_verifier": {codeVerifier},
+	}
+	if redirectURI != "" {
+		form.Set("redirect_uri", redirectURI)
+	}
+	if c.clientSecret != "" {
+		form.Set("client_secret", c.clientSecret)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.TokenEndpoint(), strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, &TokenExchangeError{msg: fmt.Sprintf("code exchange failed: %v", err)}
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, &TokenExchangeError{msg: fmt.Sprintf("code exchange failed: %v", err)}
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode == http.StatusOK {
+		var tokens TokenResponse
+		if err := json.Unmarshal(raw, &tokens); err == nil && tokens.AccessToken != "" {
+			return &tokens, nil
+		}
+	}
+
+	var body struct {
+		Detail string `json:"detail"`
+	}
+	_ = json.Unmarshal(raw, &body)
+	errorCode, _, _ := strings.Cut(body.Detail, ":")
+	return nil, &TokenExchangeError{
+		Code: errorCode,
+		msg:  strings.TrimSpace(fmt.Sprintf("code exchange failed: %d %s", resp.StatusCode, body.Detail)),
+	}
 }
 
 // Logout signs the user who owns refreshToken out of this application. Only

@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-10-26
+
+### Added
+
+- Authorization-code exchange for applications that sign users in, at parity across all three clients: Python `AuthServiceClient.exchange_code` (and async `aexchange_code`) with `TokenExchangeError`; Go `Client.ExchangeCode` returning a `*TokenResponse`, with `*TokenExchangeError`; Node `AuthServiceClient.exchangeCode` with `TokenExchangeError`. Posts the code and PKCE verifier to AuthService's `POST /token`. Made for AuthService's embedded sign-in (Auth Elements), whose `success` event hands the page a code and verifier for the backend to exchange; it works the same for codes from the redirect and popup flows. The error carries AuthService's error code (e.g. `invalid_grant`).
+- README: "Embedded sign-in: exchanging the code".
+
 ## [0.3.0] - 2026-10-25
 
 ### Security

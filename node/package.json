@@ -1,6 +1,6 @@
 {
   "name": "auth-client",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Token validation and Express integration helpers for services behind Codaonic's AuthService (OAuth 2.1 / OIDC)",
   "license": "MIT",
   "type": "module",

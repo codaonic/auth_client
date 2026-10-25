@@ -10,6 +10,17 @@ class LogoutError(Exception):
     client credentials, or an unexpected response)."""
 
 
+class TokenExchangeError(Exception):
+    """The auth service refused to exchange an authorization code, or could
+    not be reached. `error` is its error code (e.g. "invalid_grant" for a
+    code that was already used, has expired, or doesn't match the PKCE
+    verifier), or None when there was no response."""
+
+    def __init__(self, message: str, error: str | None = None):
+        super().__init__(message)
+        self.error = error
+
+
 class AuthServiceClient:
     """Calls the auth service on behalf of an application that signs users in
     -- a website backend, a mobile or desktop app.
@@ -35,6 +46,71 @@ class AuthServiceClient:
     @property
     def logout_endpoint(self) -> str:
         return f"{self.issuer}/logout"
+
+    @property
+    def token_endpoint(self) -> str:
+        return f"{self.issuer}/token"
+
+    def _code_form(self, code: str, code_verifier: str, redirect_uri: str | None) -> dict:
+        form = {
+            "grant_type": "authorization_code",
+            "client_id": self.client_id,
+            "code": code,
+            "code_verifier": code_verifier,
+        }
+        if redirect_uri:
+            form["redirect_uri"] = redirect_uri
+        if self.client_secret:
+            form["client_secret"] = self.client_secret
+        return form
+
+    @staticmethod
+    def _token_result(resp: httpx.Response) -> dict:
+        try:
+            body = resp.json()
+        except ValueError:
+            body = None
+        if resp.status_code == 200 and isinstance(body, dict) and "access_token" in body:
+            return body
+        detail = body.get("detail") if isinstance(body, dict) else None
+        error = detail.split(":", 1)[0] if isinstance(detail, str) else None
+        raise TokenExchangeError(f"code exchange failed: {resp.status_code} {detail or resp.text}", error)
+
+    def exchange_code(self, code: str, code_verifier: str, redirect_uri: str | None = None) -> dict:
+        """Exchange an authorization code for tokens at the auth service's
+        /token endpoint.
+
+        Works for every sign-in flow: the redirect, the popup widget, and
+        the embedded sign-in (Auth Elements), whose `success` event hands
+        your page `code` and `codeVerifier` to post to your backend.
+        `redirect_uri` is optional; when given it must be the one the code
+        was issued for (for an embedded sign-in, your page's origin).
+
+        Returns the token response: `access_token`, `token_type`,
+        `expires_in`, `scope` and `refresh_token`. Raises TokenExchangeError
+        when the code is refused or the auth service can't be reached.
+        """
+        http = self._http or httpx.Client(timeout=5)
+        try:
+            resp = http.post(self.token_endpoint, data=self._code_form(code, code_verifier, redirect_uri))
+        except httpx.HTTPError as exc:
+            raise TokenExchangeError(f"code exchange failed: {exc}") from exc
+        finally:
+            if self._http is None:
+                http.close()
+        return self._token_result(resp)
+
+    async def aexchange_code(self, code: str, code_verifier: str, redirect_uri: str | None = None) -> dict:
+        """Async form of exchange_code(), for use inside an async request handler."""
+        http = self._async_http or httpx.AsyncClient(timeout=5)
+        try:
+            resp = await http.post(self.token_endpoint, data=self._code_form(code, code_verifier, redirect_uri))
+        except httpx.HTTPError as exc:
+            raise TokenExchangeError(f"code exchange failed: {exc}") from exc
+        finally:
+            if self._async_http is None:
+                await http.aclose()
+        return self._token_result(resp)
 
     def _logout_form(self, refresh_token: str) -> dict:
         form = {"client_id": self.client_id, "refresh_token": refresh_token}

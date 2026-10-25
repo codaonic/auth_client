@@ -9,6 +9,39 @@ export class LogoutError extends Error {
   }
 }
 
+/**
+ * Thrown when the auth service refused to exchange an authorization code, or
+ * could not be reached. `error` is its error code (e.g. "invalid_grant" for a
+ * code that was already used, has expired, or doesn't match the PKCE
+ * verifier), or undefined when there was no response.
+ */
+export class TokenExchangeError extends Error {
+  readonly error?: string;
+
+  constructor(message: string, error?: string) {
+    super(message);
+    this.name = "TokenExchangeError";
+    this.error = error;
+  }
+}
+
+/** What the auth service's /token endpoint returns for an authorization code. */
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  scope: string;
+  refresh_token: string;
+}
+
+export interface ExchangeCodeOptions {
+  /**
+   * Optional; when given it must be the one the code was issued for (for an
+   * embedded sign-in, your page's origin).
+   */
+  redirectUri?: string;
+}
+
 export interface AuthServiceClientOptions {
   /** Confidential clients only; omit for a public client. */
   clientSecret?: string;
@@ -43,6 +76,53 @@ export class AuthServiceClient {
 
   get logoutEndpoint(): string {
     return `${this.issuer}/logout`;
+  }
+
+  get tokenEndpoint(): string {
+    return `${this.issuer}/token`;
+  }
+
+  /**
+   * Exchanges an authorization code for tokens at the auth service's /token
+   * endpoint. Works for every sign-in flow: the redirect, the popup widget,
+   * and the embedded sign-in (Auth Elements), whose `success` event hands
+   * your page `code` and `codeVerifier` to post to your backend.
+   *
+   * Rejects with TokenExchangeError when the code is refused or the auth
+   * service can't be reached.
+   */
+  async exchangeCode(code: string, codeVerifier: string, options: ExchangeCodeOptions = {}): Promise<TokenResponse> {
+    const form = new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: this.clientId,
+      code,
+      code_verifier: codeVerifier,
+    });
+    if (options.redirectUri) form.set("redirect_uri", options.redirectUri);
+    if (this.clientSecret) form.set("client_secret", this.clientSecret);
+
+    let resp: Response;
+    try {
+      resp = await this.fetchImpl(this.tokenEndpoint, { method: "POST", body: form });
+    } catch (err) {
+      throw new TokenExchangeError(`code exchange failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    let body: unknown;
+    try {
+      body = await resp.json();
+    } catch {
+      body = undefined;
+    }
+    if (resp.status === 200 && typeof body === "object" && body !== null && "access_token" in body) {
+      return body as TokenResponse;
+    }
+    const detail = typeof body === "object" && body !== null ? (body as { detail?: unknown }).detail : undefined;
+    const error = typeof detail === "string" ? detail.split(":", 1)[0] : undefined;
+    throw new TokenExchangeError(
+      `code exchange failed: ${resp.status} ${typeof detail === "string" ? detail : ""}`.trim(),
+      error,
+    );
   }
 
   /**
