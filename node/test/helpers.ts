@@ -25,6 +25,7 @@ export interface MakeTokenOptions {
   scope?: string;
   sub?: string;
   ttlSeconds?: number;
+  clientId?: string;
 }
 
 export async function makeToken(keypair: TestKeypair, opts: MakeTokenOptions = {}): Promise<string> {
@@ -34,9 +35,10 @@ export async function makeToken(keypair: TestKeypair, opts: MakeTokenOptions = {
     scope = "profile email",
     sub = "user-123",
     ttlSeconds = 600,
+    clientId = "my-app",
   } = opts;
 
-  return new SignJWT({ scope })
+  return new SignJWT({ scope, client_id: clientId })
     .setProtectedHeader({ alg: "RS256", kid: keypair.kid })
     .setSubject(sub)
     .setIssuer(iss)

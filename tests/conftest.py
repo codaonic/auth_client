@@ -2,7 +2,7 @@ import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from jose import jwk
+from joserfc.jwk import RSAKey
 
 
 @pytest.fixture(scope="module")
@@ -14,8 +14,7 @@ def keypair():
         encryption_algorithm=serialization.NoEncryption(),
     )
     kid = "test-key-1"
-    public_jwk = jwk.construct(pem, algorithm="RS256").public_key().to_dict()
-    public_jwk.pop("d", None)
+    public_jwk = RSAKey.import_key(pem).as_dict(private=False)
     public_jwk.update({"kid": kid, "use": "sig", "alg": "RS256"})
     return {"pem": pem.decode(), "kid": kid, "jwks": {"keys": [public_jwk]}}
 

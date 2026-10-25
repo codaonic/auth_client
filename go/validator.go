@@ -44,18 +44,23 @@ type jwksDocument struct {
 // TokenValidator fetches and caches the auth service's JWKS, and verifies bearer
 // tokens locally. No network call to the auth service happens per request — only
 // when the JWKS cache is cold or a token references an unknown kid (e.g. right
-// after key rotation).
+// after key rotation). Unknown-kid refetches are spaced at least the refresh
+// cooldown apart, so tokens with made-up key IDs can't turn every request into
+// a call to the auth service.
 type TokenValidator struct {
 	Issuer     string
 	ResourceID string
 
-	jwksURL    string
-	cacheTTL   time.Duration
-	httpClient *http.Client
+	jwksURL          string
+	cacheTTL         time.Duration
+	refreshCooldown  time.Duration
+	httpClient       *http.Client
+	allowedClientIDs map[string]bool
 
 	mu          sync.Mutex
 	jwks        jwksDocument
 	cacheExpiry time.Time
+	fetchedAt   time.Time
 }
 
 // Option configures a TokenValidator constructed with New.
@@ -71,6 +76,26 @@ func WithCacheTTL(ttl time.Duration) Option {
 	return func(v *TokenValidator) { v.cacheTTL = ttl }
 }
 
+// WithRefreshCooldown overrides the default 30 second minimum gap between JWKS
+// refetches triggered by a token with an unknown kid.
+func WithRefreshCooldown(cooldown time.Duration) Option {
+	return func(v *TokenValidator) { v.refreshCooldown = cooldown }
+}
+
+// WithAllowedClientIDs also requires a token's client_id claim to be one of ids.
+// The audience alone says which API a token is for, not which application the
+// user signed in through — any client of the auth service can get a token for
+// your API, signed in as one of its own users. Use this when only your own
+// application(s) should get in.
+func WithAllowedClientIDs(ids ...string) Option {
+	return func(v *TokenValidator) {
+		v.allowedClientIDs = make(map[string]bool, len(ids))
+		for _, id := range ids {
+			v.allowedClientIDs[id] = true
+		}
+	}
+}
+
 // WithHTTPClient overrides the default HTTP client used to fetch the JWKS.
 func WithHTTPClient(client *http.Client) Option {
 	return func(v *TokenValidator) { v.httpClient = client }
@@ -80,11 +105,12 @@ func WithHTTPClient(client *http.Client) Option {
 // value tokens must carry — typically the URL of your API).
 func New(issuer, resourceID string, opts ...Option) *TokenValidator {
 	v := &TokenValidator{
-		Issuer:     issuer,
-		ResourceID: resourceID,
-		jwksURL:    strings.TrimRight(issuer, "/") + "/jwks.json",
-		cacheTTL:   5 * time.Minute,
-		httpClient: &http.Client{Timeout: 3 * time.Second},
+		Issuer:          issuer,
+		ResourceID:      resourceID,
+		jwksURL:         strings.TrimRight(issuer, "/") + "/jwks.json",
+		cacheTTL:        5 * time.Minute,
+		refreshCooldown: 30 * time.Second,
+		httpClient:      &http.Client{Timeout: 3 * time.Second},
 	}
 	for _, opt := range opts {
 		opt(v)
@@ -92,8 +118,8 @@ func New(issuer, resourceID string, opts ...Option) *TokenValidator {
 	return v
 }
 
-// Validate verifies a bearer token's signature, exp, iss, and aud (must equal
-// ResourceID). It returns the decoded claims on success, or a *TokenValidationError
+// Validate verifies a bearer token's signature (RS256 only), exp, iss, aud (must
+// equal ResourceID) and, if WithAllowedClientIDs was given, client_id. It returns the decoded claims on success, or a *TokenValidationError
 // on failure.
 func (v *TokenValidator) Validate(tokenString string) (jwt.MapClaims, error) {
 	unverified, _, err := jwt.NewParser().ParseUnverified(tokenString, jwt.MapClaims{})
@@ -125,6 +151,12 @@ func (v *TokenValidator) Validate(tokenString string) (jwt.MapClaims, error) {
 	if err != nil || !parsed.Valid {
 		return nil, validationErrorf("%s", err)
 	}
+	if v.allowedClientIDs != nil {
+		clientID, _ := claims["client_id"].(string)
+		if !v.allowedClientIDs[clientID] {
+			return nil, validationErrorf("token was not issued to an allowed client")
+		}
+	}
 	return claims, nil
 }
 
@@ -149,6 +181,9 @@ func (v *TokenValidator) findKey(kid string) (*rsa.PublicKey, error) {
 		return jwkToRSAPublicKey(key)
 	}
 
+	if !v.refreshAllowed() {
+		return nil, nil
+	}
 	doc, err = v.getJWKS(true)
 	if err != nil {
 		return nil, err
@@ -157,6 +192,12 @@ func (v *TokenValidator) findKey(kid string) (*rsa.PublicKey, error) {
 		return jwkToRSAPublicKey(key)
 	}
 	return nil, nil
+}
+
+func (v *TokenValidator) refreshAllowed() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return time.Since(v.fetchedAt) >= v.refreshCooldown
 }
 
 func lookupKey(doc jwksDocument, kid string) *jsonWebKey {
@@ -192,7 +233,8 @@ func (v *TokenValidator) getJWKS(forceRefresh bool) (jwksDocument, error) {
 	}
 
 	v.jwks = doc
-	v.cacheExpiry = time.Now().Add(v.cacheTTL)
+	v.fetchedAt = time.Now()
+	v.cacheExpiry = v.fetchedAt.Add(v.cacheTTL)
 	return v.jwks, nil
 }
 

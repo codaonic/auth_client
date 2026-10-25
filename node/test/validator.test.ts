@@ -77,4 +77,31 @@ describe("TokenValidator", () => {
 
     expect(jwks.callCount()).toBe(1);
   });
+
+  it("accepts only listed clients when allowedClientIds is set", async () => {
+    const validator = new TokenValidator(ISSUER, RESOURCE_ID, { jwksUrl: jwks.url, allowedClientIds: ["my-app"] });
+
+    const claims = await validator.validate(await makeToken(keypair, { clientId: "my-app" }));
+    expect(claims.client_id).toBe("my-app");
+    await expect(validator.validate(await makeToken(keypair, { clientId: "someone-else" }))).rejects.toThrow(
+      TokenValidationError,
+    );
+  });
+
+  it("accepts any client when allowedClientIds is not set", async () => {
+    const validator = new TokenValidator(ISSUER, RESOURCE_ID, { jwksUrl: jwks.url });
+    const claims = await validator.validate(await makeToken(keypair, { clientId: "anything" }));
+    expect(claims.client_id).toBe("anything");
+  });
+
+  it("does not refetch the JWKS for every unknown kid", async () => {
+    const validator = new TokenValidator(ISSUER, RESOURCE_ID, { jwksUrl: jwks.url });
+    await validator.validate(await makeToken(keypair));
+    const madeUp = { ...keypair, kid: "made-up" };
+
+    for (let i = 0; i < 5; i++) {
+      await expect(validator.validate(await makeToken(madeUp))).rejects.toThrow(TokenValidationError);
+    }
+    expect(jwks.callCount()).toBe(1);
+  });
 });

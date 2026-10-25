@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-25
+
+### Security
+
+- Python: `TokenValidator` now only accepts RS256. It used to verify with whatever `alg` the token's own header named, letting the token choose how it was checked. (Go and Node already pinned RS256.)
+- Python: replaced `python-jose` with `joserfc`. `python-jose` is unmaintained and depends on `ecdsa`, which has a known timing side-channel with no fix.
+- Python and Go: a token with an unknown `kid` no longer forces a JWKS refetch every time. Refetches are now at least 30 seconds apart (`refresh_cooldown` / `WithRefreshCooldown`), so made-up key IDs can't turn every request into a call to the auth service. A real key rotation is still picked up on the first token that uses the new key. (Node's `jose` already did this; `refreshCooldownMs` now exposes the setting.)
+- Go: `github.com/golang-jwt/jwt/v5` 5.2.1 → 5.3.0 (fixes excessive memory use when parsing crafted headers, CVE-2025-30204).
+
+### Added
+
+- Optional allow-list of client IDs, at parity across all three clients: Python `allowed_client_ids=[...]`, Go `WithAllowedClientIDs(...)`, Node `allowedClientIds: [...]`. When set, a token whose `client_id` claim isn't listed is rejected. The audience alone doesn't say which application the user signed in through. Any client of the auth service can get a token for your API, so set this when only your own application(s) should get in.
+
+### Changed
+
+- Python now requires `joserfc>=1.6` instead of `python-jose`. The public API is unchanged, and existing code keeps working without changes.
+
 ## [0.2.0] - 2026-10-11
 
 ### Changed

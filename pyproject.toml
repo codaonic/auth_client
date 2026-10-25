@@ -1,6 +1,6 @@
 [project]
 name = "auth-client"
-version = "0.2.0"
+version = "0.3.0"
 description = "Token validation and FastAPI helpers for services behind Codaonic's AuthService (OAuth 2.1 / OIDC)"
 readme = "README.md"
 license = { text = "MIT" }
@@ -21,7 +21,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "python-jose[cryptography]>=3.5.0",
+    "joserfc>=1.6",
     "httpx>=0.27",
 ]
 

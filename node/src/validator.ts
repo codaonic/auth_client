@@ -16,6 +16,19 @@ export interface TokenValidatorOptions {
   jwksUrl?: string;
   /** How long a fetched JWKS is cached, in milliseconds. Defaults to 5 minutes. */
   cacheMaxAgeMs?: number;
+  /**
+   * Minimum gap between JWKS refetches triggered by a token with an unknown
+   * `kid`, in milliseconds. Defaults to 30 seconds.
+   */
+  refreshCooldownMs?: number;
+  /**
+   * Also require the token's `client_id` claim to be one of these. The
+   * audience alone says which API a token is for, not which application the
+   * user signed in through -- any client of the auth service can get a token
+   * for your API, signed in as one of its own users. Set this when only your
+   * own application(s) should get in.
+   */
+  allowedClientIds?: string[];
 }
 
 /**
@@ -29,6 +42,7 @@ export class TokenValidator {
   readonly resourceId: string;
 
   private readonly jwks: ReturnType<typeof createRemoteJWKSet>;
+  private readonly allowedClientIds?: ReadonlySet<string>;
 
   constructor(issuer: string, resourceId: string, options: TokenValidatorOptions = {}) {
     this.issuer = issuer;
@@ -36,25 +50,31 @@ export class TokenValidator {
     const jwksUrl = options.jwksUrl ?? `${issuer.replace(/\/+$/, "")}/jwks.json`;
     this.jwks = createRemoteJWKSet(new URL(jwksUrl), {
       cacheMaxAge: options.cacheMaxAgeMs ?? 5 * 60 * 1000,
+      cooldownDuration: options.refreshCooldownMs ?? 30 * 1000,
     });
+    if (options.allowedClientIds) this.allowedClientIds = new Set(options.allowedClientIds);
   }
 
   /**
-   * Verifies a bearer token's signature, `exp`, `iss`, and `aud` (must equal
-   * resourceId). Returns the decoded claims on success, or throws
+   * Verifies a bearer token's signature (RS256 only), `exp`, `iss`, `aud` (must
+   * equal resourceId) and, if `allowedClientIds` was given, `client_id`. Returns the decoded claims on success, or throws
    * TokenValidationError.
    */
   async validate(token: string): Promise<JWTPayload> {
+    let payload: JWTPayload;
     try {
-      const { payload } = await jwtVerify(token, this.jwks, {
+      ({ payload } = await jwtVerify(token, this.jwks, {
         issuer: this.issuer,
         audience: this.resourceId,
         algorithms: ["RS256"],
-      });
-      return payload;
+      }));
     } catch (err) {
       throw new TokenValidationError(err instanceof Error ? err.message : "invalid token");
     }
+    if (this.allowedClientIds && !this.allowedClientIds.has(String(payload.client_id))) {
+      throw new TokenValidationError("token was not issued to an allowed client");
+    }
+    return payload;
   }
 
   /** Reports whether claims carries the given scope in its space-separated `scope` claim. */

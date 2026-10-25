@@ -1,6 +1,6 @@
 # auth-client
 
-![version](https://img.shields.io/badge/version-0.2.0-blue)
+![version](https://img.shields.io/badge/version-0.3.0-blue)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Go](https://img.shields.io/badge/go-1.21%2B-blue)
 ![Node](https://img.shields.io/badge/node-18%2B-blue)
@@ -47,17 +47,17 @@ proxy.
 
 This isn't on PyPI. Every tagged release attaches a wheel and an sdist to its
 [GitHub Release](https://github.com/codaonic/auth-client/releases) — install
-straight from that URL, no `git` required. Pick a version (e.g. `v0.2.0`) and
+straight from that URL, no `git` required. Pick a version (e.g. `v0.3.0`) and
 substitute it below:
 
 ```bash
 # uv
-uv add "https://github.com/codaonic/auth-client/releases/download/v0.2.0/auth_client-0.2.0-py3-none-any.whl"
+uv add "https://github.com/codaonic/auth-client/releases/download/v0.3.0/auth_client-0.3.0-py3-none-any.whl"
 # with the FastAPI helpers:
-uv add "auth-client[fastapi] @ https://github.com/codaonic/auth-client/releases/download/v0.2.0/auth_client-0.2.0-py3-none-any.whl"
+uv add "auth-client[fastapi] @ https://github.com/codaonic/auth-client/releases/download/v0.3.0/auth_client-0.3.0-py3-none-any.whl"
 
 # pip
-pip install "auth-client[fastapi] @ https://github.com/codaonic/auth-client/releases/download/v0.2.0/auth_client-0.2.0-py3-none-any.whl"
+pip install "auth-client[fastapi] @ https://github.com/codaonic/auth-client/releases/download/v0.3.0/auth_client-0.3.0-py3-none-any.whl"
 ```
 
 If this repo is private for you, that URL needs an auth header pip/uv don't send
@@ -65,9 +65,9 @@ by default — download it with a token first, then install the local file:
 
 ```bash
 curl -L -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -o auth_client-0.2.0-py3-none-any.whl \
-  "https://github.com/codaonic/auth-client/releases/download/v0.2.0/auth_client-0.2.0-py3-none-any.whl"
-pip install "./auth_client-0.2.0-py3-none-any.whl[fastapi]"
+  -o auth_client-0.3.0-py3-none-any.whl \
+  "https://github.com/codaonic/auth-client/releases/download/v0.3.0/auth_client-0.3.0-py3-none-any.whl"
+pip install "./auth_client-0.3.0-py3-none-any.whl[fastapi]"
 ```
 
 ### Framework-agnostic validation
@@ -78,13 +78,22 @@ from auth_client import TokenValidator, TokenValidationError
 validator = TokenValidator(
     issuer="https://auth.yourdomain.com",
     resource_id="https://api.yourdomain.com",  # must match the `resource=` this token was issued for
+    allowed_client_ids=["your-app"],  # optional -- see below
 )
 
 try:
-    claims = validator.validate(token)  # verifies signature, exp, iss, aud
+    claims = validator.validate(token)  # verifies signature, exp, iss, aud (and client_id)
 except TokenValidationError:
     ...  # reject the request
 ```
+
+**Who may get in.** The audience (`aud`) says which API a token is for, not
+which application the user signed in through. Any client of the auth service
+-- including ones anyone can register for themselves -- can get a token for
+your API, signed in as one of *its* users. When only your own application(s)
+should get in (an admin panel, an internal API), pass `allowed_client_ids`: a
+token whose `client_id` isn't listed is rejected. Go: `WithAllowedClientIDs`;
+Node: `allowedClientIds`.
 
 ### FastAPI
 
@@ -181,7 +190,7 @@ the Go module proxy — no `git` binary needed, and no release asset either:
 
 ```bash
 go get github.com/codaonic/auth-client/go@main    # latest commit
-go get github.com/codaonic/auth-client/go@v0.2.0   # pinned to a release
+go get github.com/codaonic/auth-client/go@v0.3.0   # pinned to a release
 ```
 
 Framework-agnostic validation:
@@ -192,9 +201,10 @@ import authclient "github.com/codaonic/auth-client/go"
 validator := authclient.New(
     "https://auth.yourdomain.com",   // issuer
     "https://api.yourdomain.com",    // resource ID — must match this token's `aud`
+    authclient.WithAllowedClientIDs("your-app"), // optional — only tokens issued to your app
 )
 
-claims, err := validator.Validate(token) // verifies signature, exp, iss, aud
+claims, err := validator.Validate(token) // verifies signature, exp, iss, aud (and client_id)
 if err != nil {
     // reject the request
 }
@@ -262,7 +272,7 @@ verification. Not on npm — every tagged release attaches a tarball to its
 straight from that URL, no `git` required:
 
 ```bash
-npm install "https://github.com/codaonic/auth-client/releases/download/v0.2.0/auth-client-0.2.0.tgz"
+npm install "https://github.com/codaonic/auth-client/releases/download/v0.3.0/auth-client-0.3.0.tgz"
 ```
 
 Private repo? Same workaround as the Python package — download the asset with
@@ -270,9 +280,9 @@ an auth header first, then install the local file:
 
 ```bash
 curl -L -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -o auth-client-0.2.0.tgz \
-  "https://github.com/codaonic/auth-client/releases/download/v0.2.0/auth-client-0.2.0.tgz"
-npm install ./auth-client-0.2.0.tgz
+  -o auth-client-0.3.0.tgz \
+  "https://github.com/codaonic/auth-client/releases/download/v0.3.0/auth-client-0.3.0.tgz"
+npm install ./auth-client-0.3.0.tgz
 ```
 
 Framework-agnostic validation:
@@ -283,10 +293,11 @@ import { TokenValidator, TokenValidationError } from "auth-client";
 const validator = new TokenValidator(
   "https://auth.yourdomain.com", // issuer
   "https://api.yourdomain.com",  // resource ID — must match this token's `aud`
+  { allowedClientIds: ["your-app"] }, // optional — only tokens issued to your app
 );
 
 try {
-  const claims = await validator.validate(token); // verifies signature, exp, iss, aud
+  const claims = await validator.validate(token); // verifies signature, exp, iss, aud (and client_id)
 } catch (err) {
   if (err instanceof TokenValidationError) {
     // reject the request
@@ -488,10 +499,10 @@ Cutting a release (`.github/workflows/release.yml`):
 
 1. Bump `version` in `pyproject.toml` and `node/package.json` to the same
    value, and add a dated section to `CHANGELOG.md`. Commit.
-2. Push a tag matching that version: `git tag v0.2.0 && git push origin v0.2.0`.
+2. Push a tag matching that version: `git tag v0.3.0 && git push origin v0.3.0`.
 3. The workflow runs all three test suites, builds the Python wheel/sdist and
    the Node tarball, attaches them to a new GitHub Release, and tags
-   `go/v0.2.0` so `go get .../go@v0.2.0` resolves correctly (Go's module proxy
+   `go/v0.3.0` so `go get .../go@v0.3.0` resolves correctly (Go's module proxy
    needs a path-prefixed tag for a module that lives in a subdirectory).
 
 A version mismatch between the tag and either `pyproject.toml` or
