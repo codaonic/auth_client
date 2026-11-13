@@ -1,6 +1,6 @@
 # auth-client
 
-![version](https://img.shields.io/badge/version-0.3.1-blue)
+![version](https://img.shields.io/badge/version-0.4.0-blue)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Go](https://img.shields.io/badge/go-1.21%2B-blue)
 ![Node](https://img.shields.io/badge/node-18%2B-blue)
@@ -38,6 +38,7 @@ proxy.
 - [Registering your service](#registering-your-service)
 - [Sign-in timeout and logout](#sign-in-timeout-and-logout)
 - [Embedded sign-in: exchanging the code](#embedded-sign-in-exchanging-the-code)
+- [ID tokens, back-channel logout and live token checks](#id-tokens-back-channel-logout-and-live-token-checks)
 - [Local development](#local-development)
 - [Versioning](#versioning)
 - [License](#license)
@@ -48,17 +49,17 @@ proxy.
 
 This isn't on PyPI. Every tagged release attaches a wheel and an sdist to its
 [GitHub Release](https://github.com/codaonic/auth-client/releases) — install
-straight from that URL, no `git` required. Pick a version (e.g. `v0.3.1`) and
+straight from that URL, no `git` required. Pick a version (e.g. `v0.4.0`) and
 substitute it below:
 
 ```bash
 # uv
-uv add "https://github.com/codaonic/auth-client/releases/download/v0.3.1/auth_client-0.3.1-py3-none-any.whl"
+uv add "https://github.com/codaonic/auth-client/releases/download/v0.4.0/auth_client-0.4.0-py3-none-any.whl"
 # with the FastAPI helpers:
-uv add "auth-client[fastapi] @ https://github.com/codaonic/auth-client/releases/download/v0.3.1/auth_client-0.3.1-py3-none-any.whl"
+uv add "auth-client[fastapi] @ https://github.com/codaonic/auth-client/releases/download/v0.4.0/auth_client-0.4.0-py3-none-any.whl"
 
 # pip
-pip install "auth-client[fastapi] @ https://github.com/codaonic/auth-client/releases/download/v0.3.1/auth_client-0.3.1-py3-none-any.whl"
+pip install "auth-client[fastapi] @ https://github.com/codaonic/auth-client/releases/download/v0.4.0/auth_client-0.4.0-py3-none-any.whl"
 ```
 
 If this repo is private for you, that URL needs an auth header pip/uv don't send
@@ -66,9 +67,9 @@ by default — download it with a token first, then install the local file:
 
 ```bash
 curl -L -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -o auth_client-0.3.1-py3-none-any.whl \
-  "https://github.com/codaonic/auth-client/releases/download/v0.3.1/auth_client-0.3.1-py3-none-any.whl"
-pip install "./auth_client-0.3.1-py3-none-any.whl[fastapi]"
+  -o auth_client-0.4.0-py3-none-any.whl \
+  "https://github.com/codaonic/auth-client/releases/download/v0.4.0/auth_client-0.4.0-py3-none-any.whl"
+pip install "./auth_client-0.4.0-py3-none-any.whl[fastapi]"
 ```
 
 ### Framework-agnostic validation
@@ -191,7 +192,7 @@ the Go module proxy — no `git` binary needed, and no release asset either:
 
 ```bash
 go get github.com/codaonic/auth-client/go@main    # latest commit
-go get github.com/codaonic/auth-client/go@v0.3.1   # pinned to a release
+go get github.com/codaonic/auth-client/go@v0.4.0   # pinned to a release
 ```
 
 Framework-agnostic validation:
@@ -273,7 +274,7 @@ verification. Not on npm — every tagged release attaches a tarball to its
 straight from that URL, no `git` required:
 
 ```bash
-npm install "https://github.com/codaonic/auth-client/releases/download/v0.3.1/auth-client-0.3.1.tgz"
+npm install "https://github.com/codaonic/auth-client/releases/download/v0.4.0/auth-client-0.4.0.tgz"
 ```
 
 Private repo? Same workaround as the Python package — download the asset with
@@ -281,9 +282,9 @@ an auth header first, then install the local file:
 
 ```bash
 curl -L -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -o auth-client-0.3.1.tgz \
-  "https://github.com/codaonic/auth-client/releases/download/v0.3.1/auth-client-0.3.1.tgz"
-npm install ./auth-client-0.3.1.tgz
+  -o auth-client-0.4.0.tgz \
+  "https://github.com/codaonic/auth-client/releases/download/v0.4.0/auth-client-0.4.0.tgz"
+npm install ./auth-client-0.4.0.tgz
 ```
 
 Framework-agnostic validation:
@@ -530,6 +531,36 @@ means the code was already used, has expired (codes are one-time and
 short-lived), or doesn't match the verifier: show the sign-in form again. With
 no error code, the auth service couldn't be reached.
 
+## ID tokens, back-channel logout and live token checks
+
+For applications that sign users in. Same names in all three clients
+(Python `snake_case`, Go and Node `CamelCase`).
+
+| Method | What it does |
+|---|---|
+| `verify_id_token(id_token, nonce)` | Checks the ID token from the token response and returns its claims (`sub`, `email`, `name`, `roles`). |
+| `verify_logout_token(logout_token)` | Checks the token posted to your back-channel logout URL. End the sessions matching `sub` / `sid`. |
+| `refresh(refresh_token)` | New tokens for a refresh token. Store the new refresh token. |
+| `introspect(token)` | `{"active": false}` once the person is signed out or loses access. Needs a client secret. |
+| `logout_url(..., id_token_hint=...)` | The browser logout URL, with the person's ID token. |
+
+```python
+auth = AuthServiceClient("https://auth.yourdomain.com", "your-app", client_secret=CLIENT_SECRET)
+
+tokens = auth.exchange_code(code, verifier, redirect_uri)
+user = auth.verify_id_token(tokens["id_token"], nonce=saved_nonce)
+
+@app.post("/auth/backchannel-logout")
+async def backchannel_logout(logout_token: str = Form(...)):
+    claims = auth.verify_logout_token(logout_token)
+    end_sessions(claims["sub"], claims.get("sid"))  # your code
+    return Response(status_code=200)
+```
+
+Go: `VerifyIDToken`, `VerifyLogoutToken`, `Refresh`, `Introspect`,
+`LogoutURLWithIDToken`. Node: `verifyIdToken`, `verifyLogoutToken`, `refresh`,
+`introspect`, `logoutUrl({ idTokenHint })`.
+
 ## Local development
 
 ```bash
@@ -560,10 +591,10 @@ Cutting a release (`.github/workflows/release.yml`):
 
 1. Bump `version` in `pyproject.toml` and `node/package.json` to the same
    value, and add a dated section to `CHANGELOG.md`. Commit.
-2. Push a tag matching that version: `git tag v0.3.1 && git push origin v0.3.1`.
+2. Push a tag matching that version: `git tag v0.4.0 && git push origin v0.4.0`.
 3. The workflow runs all three test suites, builds the Python wheel/sdist and
    the Node tarball, attaches them to a new GitHub Release, and tags
-   `go/v0.3.1` so `go get .../go@v0.3.1` resolves correctly (Go's module proxy
+   `go/v0.4.0` so `go get .../go@v0.4.0` resolves correctly (Go's module proxy
    needs a path-prefixed tag for a module that lives in a subdirectory).
 
 A version mismatch between the tag and either `pyproject.toml` or
