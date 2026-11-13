@@ -122,22 +122,28 @@ func New(issuer, resourceID string, opts ...Option) *TokenValidator {
 // equal ResourceID) and, if WithAllowedClientIDs was given, client_id. It returns the decoded claims on success, or a *TokenValidationError
 // on failure.
 func (v *TokenValidator) Validate(tokenString string) (jwt.MapClaims, error) {
+	claims, _, err := v.verify(tokenString)
+	return claims, err
+}
+
+// verify is Validate, also returning the token's header.
+func (v *TokenValidator) verify(tokenString string) (jwt.MapClaims, map[string]any, error) {
 	unverified, _, err := jwt.NewParser().ParseUnverified(tokenString, jwt.MapClaims{})
 	if err != nil {
-		return nil, validationErrorf("malformed token")
+		return nil, nil, validationErrorf("malformed token")
 	}
 
 	kid, _ := unverified.Header["kid"].(string)
 	if kid == "" {
-		return nil, validationErrorf("unknown signing key")
+		return nil, nil, validationErrorf("unknown signing key")
 	}
 
 	key, err := v.findKey(kid)
 	if err != nil {
-		return nil, validationErrorf("%s", err)
+		return nil, nil, validationErrorf("%s", err)
 	}
 	if key == nil {
-		return nil, validationErrorf("unknown signing key")
+		return nil, nil, validationErrorf("unknown signing key")
 	}
 
 	claims := jwt.MapClaims{}
@@ -149,15 +155,15 @@ func (v *TokenValidator) Validate(tokenString string) (jwt.MapClaims, error) {
 		jwt.WithAudience(v.ResourceID),
 	)
 	if err != nil || !parsed.Valid {
-		return nil, validationErrorf("%s", err)
+		return nil, nil, validationErrorf("%s", err)
 	}
 	if v.allowedClientIDs != nil {
 		clientID, _ := claims["client_id"].(string)
 		if !v.allowedClientIDs[clientID] {
-			return nil, validationErrorf("token was not issued to an allowed client")
+			return nil, nil, validationErrorf("token was not issued to an allowed client")
 		}
 	}
-	return claims, nil
+	return claims, parsed.Header, nil
 }
 
 // HasScope reports whether claims carries the given scope in its space-separated
