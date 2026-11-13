@@ -1,4 +1,4 @@
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import { createRemoteJWKSet, jwtVerify, type JWTHeaderParameters, type JWTPayload } from "jose";
 
 /**
  * Thrown by TokenValidator.validate when a token is malformed, expired, or
@@ -61,9 +61,15 @@ export class TokenValidator {
    * TokenValidationError.
    */
   async validate(token: string): Promise<JWTPayload> {
+    return (await this.verify(token)).payload;
+  }
+
+  /** @internal validate(), also returning the token's header. */
+  async verify(token: string): Promise<{ payload: JWTPayload; header: JWTHeaderParameters }> {
     let payload: JWTPayload;
+    let header: JWTHeaderParameters;
     try {
-      ({ payload } = await jwtVerify(token, this.jwks, {
+      ({ payload, protectedHeader: header } = await jwtVerify(token, this.jwks, {
         issuer: this.issuer,
         audience: this.resourceId,
         algorithms: ["RS256"],
@@ -74,7 +80,7 @@ export class TokenValidator {
     if (this.allowedClientIds && !this.allowedClientIds.has(String(payload.client_id))) {
       throw new TokenValidationError("token was not issued to an allowed client");
     }
-    return payload;
+    return { payload, header };
   }
 
   /** Reports whether claims carries the given scope in its space-separated `scope` claim. */
