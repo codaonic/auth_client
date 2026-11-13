@@ -85,6 +85,10 @@ class TokenValidator:
 
         Returns the decoded claims on success, or raises TokenValidationError.
         """
+        return self._verify(token)[1]
+
+    def _verify(self, token: str) -> tuple[dict, dict]:
+        """(header, claims) of a token that passes every check in validate()."""
         try:
             kid = extract_compact(token.encode()).headers().get("kid")
         except (JoseError, ValueError) as exc:
@@ -95,14 +99,15 @@ class TokenValidator:
             raise TokenValidationError("unknown signing key")
 
         try:
-            claims = jwt.decode(token, RSAKey.import_key(key), algorithms=[ALGORITHM]).claims
+            decoded = jwt.decode(token, RSAKey.import_key(key), algorithms=[ALGORITHM])
+            claims = decoded.claims
             self._claims.validate(claims)
         except (JoseError, ValueError) as exc:
             raise TokenValidationError(str(exc) or type(exc).__name__) from exc
 
         if self.allowed_client_ids is not None and claims.get("client_id") not in self.allowed_client_ids:
             raise TokenValidationError("token was not issued to an allowed client")
-        return claims
+        return decoded.header, claims
 
     @staticmethod
     def has_scope(claims: dict, scope: str) -> bool:
